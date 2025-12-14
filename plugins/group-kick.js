@@ -10,38 +10,48 @@ cmd({
 },
 async (conn, mek, m, { from, isGroup, isBotAdmins, isAdmins, reply }) => {
     try {
-        if (!isGroup) return reply("📛 *Group command only!*");
-        if (!isAdmins) return reply("📛 *Only admins can use this command!*");
-        if (!isBotAdmins) return reply("📛 *Bot must be admin!*");
+        if (!isGroup) return reply("📛 *Group only command!*");
+        if (!isAdmins) return reply("📛 *You must be a group admin!*");
+        if (!isBotAdmins) return reply("📛 *Bot must be admin to remove!*");
 
-        let mentionedJid;
+        let targetJid;
 
-        // Mentioned
-        if (mek.message?.extendedTextMessage?.contextInfo?.mentionedJid?.length) {
-            mentionedJid = mek.message.extendedTextMessage.contextInfo.mentionedJid[0];
+        // Check mention first
+        const mentioned = mek.message?.extendedTextMessage?.contextInfo?.mentionedJid;
+        if (mentioned && mentioned.length > 0) {
+            targetJid = mentioned[0];
         }
-        // Reply
+        // Otherwise use reply
         else if (mek.message?.extendedTextMessage?.contextInfo?.participant) {
-            mentionedJid = mek.message.extendedTextMessage.contextInfo.participant;
-        } else {
-            return reply("⚠️ *Reply to a user's message or mention them to kick!*"); 
+            targetJid = mek.message.extendedTextMessage.contextInfo.participant;
+        }
+        else {
+            return reply("⚠️ *Please reply to a user or @mention them to kick!*");
         }
 
-        // Bot detect
-        const botJid = conn.user.id?.split(":")[0] + "@s.whatsapp.net";
-        if (mentionedJid === botJid) {
-            return reply("😒 *It's me!*");
+        // Prevent kicking the bot itself
+        const botJid = conn.user.id.split(':')[0] + "@s.whatsapp.net";
+        if (targetJid === botJid) {
+            return reply("😅 *I can't remove myself!*");
         }
 
-        await conn.groupParticipantsUpdate(from, [mentionedJid], "remove");
-
-        await conn.sendMessage(from, { 
-            text: `✅ *Successfully Removed:* @${mentionedJid.split("@")[0]}`,
-            mentions: [mentionedJid]
+        // Remove participant
+        await conn.groupParticipantsUpdate(from, [targetJid], "remove");
+        
+        // Confirm removal
+        await conn.sendMessage(from, {
+            text: `✅ *Removed:* @${targetJid.split("@")[0]}`,
+            mentions: [targetJid]
         });
 
     } catch (err) {
-        console.log(err);
-        reply("❌ *Failed to remove the user!*");
+        console.error("Kick Error:", err);
+
+        // Better error feedback
+        let errMsg = "❌ *Failed to remove user!*";
+        if (err?.output?.statusCode === 409) {
+            errMsg = "⚠️ *Cannot remove this user (maybe admin or permissions issue)*";
+        }
+        reply(errMsg);
     }
 });
