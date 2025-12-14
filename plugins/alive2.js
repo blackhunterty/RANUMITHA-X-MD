@@ -93,7 +93,7 @@ async (robin, mek, m, { from, sender, reply }) => {
 
 // REPLY LISTENER FOR PING
 cmd({
-    pattern: ".*",
+    pattern: "1",
     fromMe: false, // respond to everyone
     desc: "Reply to alive message to check ping",
     category: "main",
