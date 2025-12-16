@@ -5,92 +5,81 @@ const fs = require("fs");
 const path = require("path");
 const ffmpeg = require("fluent-ffmpeg");
 
-// Fake vCard
+// Fake ChatGPT vCard
 const fakevCard = {
-  key: {
-    fromMe: false,
-    participant: "0@s.whatsapp.net",
-    remoteJid: "status@broadcast",
-  },
-  message: {
-    contactMessage: {
-      displayName: "© Mr Hiruka",
-      vcard: `BEGIN:VCARD
+    key: {
+        fromMe: false,
+        participant: "0@s.whatsapp.net",
+        remoteJid: "status@broadcast"
+    },
+    message: {
+        contactMessage: {
+            displayName: "© Mr Hiruka",
+            vcard: `BEGIN:VCARD
 VERSION:3.0
 FN:Meta
 ORG:META AI;
 TEL;type=CELL;type=VOICE;waid=94762095304:+94762095304
-END:VCARD`,
-    },
-  },
+END:VCARD`
+        }
+    }
 };
 
-// Temp folder
-const tempDir = path.join(__dirname, "../temp");
-if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir, { recursive: true });
 
-cmd(
-  {
-    pattern: "song",
-    alias: ["play", "song1", "play1"],
-    react: "🎵",
-    desc: "Download YouTube Song",
-    category: "download",
-    use: ".song <song name> OR reply + .song",
-    filename: __filename,
-  },
+cmd({
+  pattern: "song",
+  alias: ["play", "song1", "play1"],
+  react: "🎵",
+  desc: "YouTube Song Downloader (Multi Reply + Voice Note Fixed)",
+  category: "download",
+  use: ".song4 <query>",
+  filename: __filename,
+}, async (conn, mek, m, { from, reply, q }) => {
+  try {
+    /* ===== QUERY ===== */
+    let query = q?.trim();
 
-  async (conn, mek, m, { from, reply, q }) => {
-    try {
-      // 🔹 reply text support
-      if (!q) {
-        const quoted =
-          mek.message?.extendedTextMessage?.contextInfo?.quotedMessage;
-        if (quoted) {
-          q = quoted.conversation || quoted.extendedTextMessage?.text;
-        }
-      }
+    if (!query && m?.quoted) {
+      query =
+        m.quoted.message?.conversation ||
+        m.quoted.message?.extendedTextMessage?.text ||
+        m.quoted.text;
+    }
 
-      if (!q)
-        return reply(
-          "⚠️ Please provide a song name or YouTube link (or reply to a message)."
-        );
+    if (!query) {
+      return reply(
+        "⚠️ Please provide a song name or YouTube link (or reply to a message)."
+      );
+    }
 
-      let video;
+    if (query.includes("youtube.com/shorts/")) {
+      const id = query.split("/shorts/")[1].split(/[?&]/)[0];
+      query = `https://www.youtube.com/watch?v=${id}`;
+    }
 
-      // 🔹 Check if input is YouTube URL (including Shorts)
-      const ytRegex =
-        /(https?:\/\/)?(www\.)?(youtube\.com|youtu\.be)\/(watch\?v=|shorts\/)?([a-zA-Z0-9_-]{11,})/;
-      const match = q.match(ytRegex);
+    /* ===== SEARCH ===== */
+    const search = await yts(query);
+    if (!search.videos.length)
+      return reply("❌ Song not found or API error.");
 
-      if (match) {
-        const videoId = match[5];
-        const videoUrl = `https://www.youtube.com/watch?v=${videoId}`;
+    const video = search.videos[0];
 
-        const search = await yts(videoUrl);
-        if (!search.videos?.length) return reply("❌ The song could not be found.");
+    /* ===== API ===== */
+    const api = `https://api-aswin-sparky.koyeb.app/api/downloader/song?search=${encodeURIComponent(
+      video.url
+    )}`;
+    const { data } = await axios.get(api);
+    if (!data?.status || !data?.data?.url)
+      return reply("*❌ Download error*");
 
-        video = search.videos[0];
-      } else {
-        // Normal search
-        const search = await yts(q);
-        if (!search.videos?.length) return reply("❌ The song could not be found.");
+    const songUrl = data.data.url;
 
-        video = search.videos[0];
-      }
-
-      // 🌐 API call to download
-      const apiUrl = `https://api-aswin-sparky.koyeb.app/api/downloader/song?search=${encodeURIComponent(
-        video.url
-      )}`;
-      const { data } = await axios.get(apiUrl);
-
-      if (!data?.status || !data?.data?.url) return reply("❌ The song could not be found.");
-
-      const audioUrl = data.data.url;
-
-      // 📩 menu
-      const caption = `
+    /* ===== MENU ===== */
+    const sent = await conn.sendMessage(
+      from,
+      {
+        image: { url: video.thumbnail },
+        caption: `
 🎶 *RANUMITHA-X-MD SONG DOWNLOADER* 🎶
 
 📑 *Title:* ${video.title}
@@ -105,103 +94,108 @@ cmd(
 2. *Document Type* 📁  
 3. *Voice Note Type* 🎤  
 
-> © Powered by 𝗥𝗔𝗡𝗨𝗠𝗜𝗧𝗛𝗔-𝗫-𝗠𝐃 🌛`;
+> © Powered by 𝗥𝗔𝗡𝗨𝗠𝗜𝗧𝗛𝗔-𝗫-𝗠𝐃 🌛`,
+      },
+      { quoted: fakevCard }
+    );
 
-      const sentMsg = await conn.sendMessage(
-        from,
-        { image: { url: video.thumbnail }, caption },
-        { quoted: fakevCard }
-      );
+    const menuId = sent.key.id;
 
-      const messageID = sentMsg.key.id;
+    /* ===== REACT HELPER ===== */
+    const react = async (emoji, key) => {
+      await conn.sendMessage(from, {
+        react: { text: emoji, key },
+      });
+    };
 
-      // 🧠 one-time reply handler
-      const handler = async (msgUpdate) => {
-        try {
-          const mekInfo = msgUpdate.messages?.[0];
-          if (!mekInfo?.message) return;
+    /* ===== MULTI REPLY LISTENER ===== */
+    const handler = async (up) => {
+      const msg = up.messages?.[0];
+      if (!msg?.message) return;
 
-          const text =
-            mekInfo.message.conversation ||
-            mekInfo.message.extendedTextMessage?.text;
+      const text =
+        msg.message.conversation ||
+        msg.message.extendedTextMessage?.text;
 
-          const isReply =
-            mekInfo.message?.extendedTextMessage?.contextInfo?.stanzaId === messageID;
+      const stanzaId =
+        msg.message.extendedTextMessage?.contextInfo?.stanzaId;
 
-          if (!isReply) return;
+      // only replies to this menu
+      if (stanzaId !== menuId) return;
 
-          const choice = text.trim();
+      if (!["1", "2", "3"].includes(text)) return;
 
-          const safeTitle = video.title.replace(/[\\/:*?"<>|]/g, "").slice(0, 80);
+      /* ⬇️ DOWNLOAD START */
+      await react("⬇️", msg.key);
 
-          const tempMp3 = path.join(tempDir, `${Date.now()}.mp3`);
-          const tempOpus = path.join(tempDir, `${Date.now()}.opus`);
+      /* ===== OPTION 1 : AUDIO ===== */
+      if (text === "1") {
+        await react("⬆️", msg.key);
 
-          // ⬇️ Download react
-          await conn.sendMessage(from, { react: { text: "⬇️", key: mekInfo.key } });
+        await conn.sendMessage(from, {
+          audio: { url: songUrl },
+          mimetype: "audio/mpeg",
+        }, { quoted: msg });
 
-          // ⬆️ Upload react
-          await conn.sendMessage(from, { react: { text: "⬆️", key: mekInfo.key } });
+        return react("✔️", msg.key);
+      }
 
-          // 1️⃣ Audio
-          if (choice === "1") {
-            await conn.sendMessage(
-              from,
-              { audio: { url: audioUrl }, mimetype: "audio/mpeg", fileName: `${safeTitle}.mp3` },
-              { quoted: mek }
-            );
+      /* ===== OPTION 2 : DOCUMENT ===== */
+      if (text === "2") {
+        const buffer = await axios.get(songUrl, {
+          responseType: "arraybuffer",
+        });
 
-            // 2️⃣ Document
-          } else if (choice === "2") {
-            await conn.sendMessage(
-              from,
-              { document: { url: audioUrl }, mimetype: "audio/mpeg", fileName: `${safeTitle}.mp3` },
-              { quoted: mek }
-            );
+        await react("⬆️", msg.key);
 
-            // 3️⃣ Voice note
-          } else if (choice === "3") {
-            const res = await axios.get(audioUrl, { responseType: "arraybuffer" });
-            fs.writeFileSync(tempMp3, res.data);
+        await conn.sendMessage(from, {
+          document: buffer.data,
+          mimetype: "audio/mpeg",
+          fileName: `${video.title}.mp3`,
+        }, { quoted: msg });
 
-            await new Promise((resolve, reject) => {
-              ffmpeg(tempMp3)
-                .audioCodec("libopus")
-                .format("opus")
-                .audioBitrate("64k")
-                .save(tempOpus)
-                .on("end", resolve)
-                .on("error", reject);
-            });
+        return react("✔️", msg.key);
+      }
 
-            const voice = fs.readFileSync(tempOpus);
+      /* ===== OPTION 3 : VOICE NOTE (FIXED) ===== */
+      if (text === "3") {
+        const mp3Path = path.join(__dirname, `${Date.now()}.mp3`);
+        const opusPath = path.join(__dirname, `${Date.now()}.opus`);
 
-            await conn.sendMessage(
-              from,
-              { audio: voice, mimetype: "audio/ogg; codecs=opus", ptt: true },
-              { quoted: mek }
-            );
+        // Download mp3
+        const stream = await axios.get(songUrl, { responseType: "stream" });
+        const writer = fs.createWriteStream(mp3Path);
+        stream.data.pipe(writer);
+        await new Promise(r => writer.on("finish", r));
 
-            fs.unlinkSync(tempMp3);
-            fs.unlinkSync(tempOpus);
-          } else {
-            await reply("*❌ Invalid choice!*");
-          }
+        // Convert to opus
+        await new Promise((resolve, reject) => {
+          ffmpeg(mp3Path)
+            .audioCodec("libopus")
+            .format("opus")
+            .save(opusPath)
+            .on("end", resolve)
+            .on("error", reject);
+        });
 
-          // ✔️ Done react
-          await conn.sendMessage(from, { react: { text: "✔️", key: mekInfo.key } });
+        await react("⬆️", msg.key);
 
-          // remove listener
-          conn.ev.off("messages.upsert", handler);
-        } catch (e) {
-          console.error("song reply error:", e);
-        }
-      };
+        await conn.sendMessage(from, {
+          audio: fs.readFileSync(opusPath),
+          mimetype: "audio/ogg; codecs=opus",
+          ptt: true,
+        }, { quoted: msg });
 
-      conn.ev.on("messages.upsert", handler);
-    } catch (err) {
-      console.error("song cmd error:", err);
-      reply("*Error*");
-    }
+        fs.unlinkSync(mp3Path);
+        fs.unlinkSync(opusPath);
+
+        return react("✔️", msg.key);
+      }
+    };
+
+    conn.ev.on("messages.upsert", handler);
+  } catch (e) {
+    console.error(e);
+    reply("*Error*");
   }
-);
+});
