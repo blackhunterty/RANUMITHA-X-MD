@@ -7,7 +7,7 @@ const fs = require('fs');
 const path = require('path');
 
 cmd({
-    pattern: "songx",
+    pattern: "song4",
     react: "🎵",
     desc: "Download YouTube MP3 / Voice Note",
     category: "download",
@@ -15,10 +15,26 @@ cmd({
     filename: __filename
 }, async (conn, mek, m, { from, reply, q }) => {
     try {
-        if (!q) return reply("❓ What song do you want to download?");
+        // Get query from text or quoted message
+        let query = q?.trim();
+        if (!query && m?.quoted) {
+            query =
+                m.quoted.message?.conversation ||
+                m.quoted.message?.extendedTextMessage?.text ||
+                m.quoted.text;
+        }
+        if (!query) {
+            return reply("⚠️ Please provide a song name or YouTube link (or reply to a message).");
+        }
+
+        // Convert Shorts link to normal YouTube link
+        if (query.includes("youtube.com/shorts/")) {
+            const videoId = query.split("/shorts/")[1].split(/[?&]/)[0];
+            query = `https://www.youtube.com/watch?v=${videoId}`;
+        }
 
         // Search YouTube
-        const search = await yts(q);
+        const search = await yts(query);
         if (!search.videos.length) return reply("❌ No results found for your query.");
         const data = search.videos[0];
         const ytUrl = data.url;
