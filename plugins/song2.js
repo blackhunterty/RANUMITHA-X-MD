@@ -1,13 +1,16 @@
 const { cmd } = require("../command");
-const yts = require("yt-search");
-const axios = require("axios");
+const fetch = require("node-fetch");
 const fs = require("fs");
 const path = require("path");
 const ffmpeg = require("fluent-ffmpeg");
 
 // Fake vCard
 const fakevCard = {
-  key: { fromMe: false, participant: "0@s.whatsapp.net", remoteJid: "status@broadcast" },
+  key: {
+    fromMe: false,
+    participant: "0@s.whatsapp.net",
+    remoteJid: "status@broadcast",
+  },
   message: {
     contactMessage: {
       displayName: "© Mr Hiruka",
@@ -21,125 +24,188 @@ END:VCARD`,
   },
 };
 
-// Temp folder
-const tempDir = path.join(__dirname, "../temp");
-if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir, { recursive: true });
+// Command
+cmd(
+  {
+    pattern: "song2",
+    alias: ["play2"],
+    react: "🎵",
+    desc: "Download YouTube song (Audio) via Nekolabs API (song2 cmd)",
+    category: "download",
+    use: ".song2 ",
+    filename: __filename,
+  },
 
-cmd({
-  pattern: "song2",
-  alias: ["play2"],
-  react: "🎵",
-  desc: "Download YouTube Song",
-  category: "download",
-  use: ".song2  OR reply + .song2",
-  filename: __filename,
-}, async (conn, mek, m, { from, reply, q }) => {
-  try {
-    // 🔹 Get reply text if no query
-    if (!q) {
-      const quoted = mek.message?.extendedTextMessage?.contextInfo?.quotedMessage;
-      if (quoted) q = quoted.conversation || quoted.extendedTextMessage?.text;
-    }
+  async (conn, mek, m, { from, reply, q }) => {
+    try {
+      let query = q?.trim();
 
-    if (!q) return reply("⚠️ Please provide a song name or YouTube link (or reply to a message).");
+      if (!query && m?.quoted) {
+        query =
+          m.quoted.message?.conversation ||
+          m.quoted.message?.extendedTextMessage?.text ||
+          m.quoted.text;
+      }
 
-    let video;
+      if (!query) {
+        return reply(
+          "⚠️ Please provide a song name or YouTube link (or reply to a message)."
+        );
+      }
 
-    // 🔹 Check if input is YouTube URL (including Shorts)
-    const ytRegex = /(https?:\/\/)?(www\.)?(youtube\.com|youtu\.be)\/(watch\?v=|shorts\/)?([a-zA-Z0-9_-]{11,})/;
-    const match = q.match(ytRegex);
+      // Convert Shorts to normal YouTube link
+      if (query.includes("youtube.com/shorts/")) {
+        const videoId = query.split("/shorts/")[1].split(/[?&]/)[0];
+        query = `https://www.youtube.com/watch?v=${videoId}`;
+      }
 
-    if (match) {
-      const videoId = match[5];
-      const videoUrl = `https://www.youtube.com/watch?v=${videoId}`;
-      const search = await yts(videoUrl);
-      if (!search.videos?.length) return reply("❌ The song could not be found.");
-      video = search.videos[0];
-    } else {
-      const search = await yts(q);
-      if (!search.videos?.length) return reply("❌ The song could not be found.");
-      video = search.videos[0];
-    }
+      // Call Nekolabs API
+      const apiUrl = `https://api.nekolabs.my.id/downloader/youtube/play/v1?q=${encodeURIComponent(
+        query
+      )}`;
+      const res = await fetch(apiUrl);
+      const data = await res.json();
 
-    // 🌐 API call
-    const apiUrl = `https://gtech-api-xtp1.onrender.com/api/audio/yt?apikey=APIKEY&url=${encodeURIComponent(video.url)}`;
-    const { data } = await axios.get(apiUrl);
+      if (!data?.success || !data?.result?.downloadUrl) {
+        return reply("❌ Song not found or API error.");
+      }
 
-    if (!data?.status || !data?.result?.media?.audio_url) return reply("❌ Song download failed.");
+      const meta = data.result.metadata;
+      const dlUrl = data.result.downloadUrl;
 
-    const audioUrl = data.result.media.audio_url;
-    const thumbnail = data.result.media.thumbnail;
+      // Get thumbnail
+      let buffer;
+      try {
+        const thumbRes = await fetch(meta.cover);
+        buffer = Buffer.from(await thumbRes.arrayBuffer());
+      } catch {
+        buffer = null;
+      }
 
-    // 📩 Menu message
-    const caption = `
-🎶 *RANUMITHA-X-MD SONG DOWNLOADER* 🎶
+      // Caption message
+      const caption = `
+🎶 *RANUMITHA-X-MD SONG2 DOWNLOADER* 🎶
 
-📑 *Title:* ${video.title} ⏱ *Duration:* ${video.timestamp} 📆 *Uploaded:* ${video.ago} 👁 *Views:* ${video.views}
+📑 *Title:* ${meta.title}
+📡 *Channel:* ${meta.channel}
+⏱ *Duration:* ${meta.duration}
+🌐 *Url:* ${meta.url}
 
-🔽 *Reply with any number to get the song as a voice note.*
+🔽 *Reply with your choice:*
 
-© Powered by 𝗥𝗔𝗡𝗨𝗠𝗜𝗧𝗛𝗔-𝗫-𝗠D 🌛
-`;
+1. *Audio Type* 🎵  
+2. *Document Type* 📁  
+3. *Voice Note Type* 🎤  
 
-    const sentMsg = await conn.sendMessage(from, { image: { url: thumbnail }, caption }, { quoted: fakevCard });
-    const msgId = sentMsg.key.id;
+> © Powerd by 𝗥𝗔𝗡𝗨𝗠𝗜𝗧𝗛𝗔-𝗫-𝗠𝐃 🌛`;
 
-    // 🧠 Reply handler
-    const handler = async (msgUpdate) => {
-      const mekInfo = msgUpdate.messages?.[0];
-      if (!mekInfo?.message) return;
-
-      const text = mekInfo.message.conversation || mekInfo.message.extendedTextMessage?.text;
-      const isReply = mekInfo.message?.extendedTextMessage?.contextInfo?.stanzaId === msgId;
-      if (!isReply) return;
-
-      // Accept any numeric reply
-      if (!/^\d+$/.test(text.trim())) return reply("*❌ Please reply with a number!*");
-
-      const safeTitle = video.title.replace(/[\\/:*?"<>|]/g, "").slice(0, 80);
-      const tempMp3 = path.join(tempDir, `${Date.now()}.mp3`);
-      const tempOpus = path.join(tempDir, `${Date.now()}.opus`);
-
-      // ⬇️ Download react
-      await conn.sendMessage(from, { react: { text: "⬇️", key: mekInfo.key } });
-
-      // Download audio
-      const audioRes = await axios.get(audioUrl, { responseType: "arraybuffer" });
-      fs.writeFileSync(tempMp3, audioRes.data);
-
-      // Convert to voice note (opus)
-      await new Promise((res, rej) => {
-        ffmpeg(tempMp3)
-          .audioCodec("libopus")
-          .format("opus")
-          .audioBitrate("64k")
-          .save(tempOpus)
-          .on("end", res)
-          .on("error", rej);
-      });
-
-      const voice = fs.readFileSync(tempOpus);
-
-      // Send voice note
-      await conn.sendMessage(
+      const sentMsg = await conn.sendMessage(
         from,
-        { audio: voice, mimetype: "audio/ogg; codecs=opus", ptt: true },
-        { quoted: mek }
+        { image: buffer, caption },
+        { quoted: fakevCard }
       );
 
-      // Cleanup
-      fs.unlinkSync(tempMp3);
-      fs.unlinkSync(tempOpus);
+      const messageID = sentMsg.key.id;
 
-      // ✔️ Done react
-      await conn.sendMessage(from, { react: { text: "✔️", key: mekInfo.key } });
+      // Reply listener
+      conn.ev.on("messages.upsert", async (msgUpdate) => {
+        try {
+          const mekInfo = msgUpdate.messages[0];
+          if (!mekInfo?.message) return;
 
-      conn.ev.off("messages.upsert", handler);
-    };
+          const userText =
+            mekInfo.message.conversation ||
+            mekInfo.message.extendedTextMessage?.text;
 
-    conn.ev.on("messages.upsert", handler);
-  } catch (e) {
-    console.error(e);
-    reply("*Error occurred while processing the song*");
+          const isReply =
+            mekInfo?.message?.extendedTextMessage?.contextInfo?.stanzaId ===
+            messageID;
+
+          if (!isReply) return;
+
+          const choice = userText.trim();
+
+          // React ⬇️
+          await conn.sendMessage(from, {
+            react: { text: "⬇️", key: mekInfo.key },
+          });
+
+          const safeTitle = meta.title
+            .replace(/[\\/:*?"<>|]/g, "")
+            .slice(0, 80);
+
+          const audioFileName = `${safeTitle}.mp3`;
+          const tempPath = path.join(__dirname, `../temp/${Date.now()}.mp3`);
+          const voicePath = path.join(__dirname, `../temp/${Date.now()}.opus`);
+
+          let type;
+
+          // Option 1: Audio
+          if (choice === "1") {
+            type = {
+              audio: { url: dlUrl },
+              mimetype: "audio/mpeg",
+              fileName: audioFileName,
+            };
+
+            // Option 2: Document
+          } else if (choice === "2") {
+            type = {
+              document: { url: dlUrl },
+              mimetype: "audio/mpeg",
+              fileName: audioFileName,
+              caption: meta.title,
+            };
+
+            // Option 3: Voice Note
+          } else if (choice === "3") {
+            const audioRes = await fetch(dlUrl);
+            const audioBuffer = Buffer.from(await audioRes.arrayBuffer());
+            fs.writeFileSync(tempPath, audioBuffer);
+
+            await new Promise((resolve, reject) => {
+              ffmpeg(tempPath)
+                .audioCodec("libopus")
+                .format("opus")
+                .audioBitrate("64k")
+                .save(voicePath)
+                .on("end", resolve)
+                .on("error", reject);
+            });
+
+            const voiceBuffer = fs.readFileSync(voicePath);
+
+            type = {
+              audio: voiceBuffer,
+              mimetype: "audio/ogg; codecs=opus",
+              ptt: true,
+            };
+
+            fs.unlinkSync(tempPath);
+            fs.unlinkSync(voicePath);
+          } else {
+            return reply("❌ *Invalid choice!*");
+          }
+
+          // React ⬆️
+          await conn.sendMessage(from, {
+            react: { text: "⬆️", key: mekInfo.key },
+          });
+
+          // Send output file
+          await conn.sendMessage(from, type, { quoted: mek });
+
+          // React ✔️
+          await conn.sendMessage(from, {
+            react: { text: "✔️", key: mekInfo.key },
+          });
+        } catch (err) {
+          console.error("song2 reply handler error:", err);
+        }
+      });
+    } catch (err) {
+      console.error("song2 cmd error:", err);
+      reply("⚠️ An error occurred while processing your request.");
+    }
   }
-});
+);
