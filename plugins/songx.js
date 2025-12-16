@@ -7,7 +7,7 @@ const fs = require('fs');
 const path = require('path');
 
 cmd({
-    pattern: "songx",
+    pattern: "song4",
     react: "🎵",
     desc: "Download YouTube MP3 / Voice Note",
     category: "download",
@@ -55,9 +55,9 @@ cmd({
 🔢 *Reply Below Number*
 1️⃣ *Audio Type*
 2️⃣ *Document Type (MP3)*
-3️⃣ *Voice Note (Opus)*
+3️⃣ *Voice Note*
 
-> © Powerd by 𝗥𝗔𝗡𝗨𝗠𝗜𝗧𝗛𝗔-𝗫-𝗠𝗗 🌛`;
+> Powered by 𝙳𝙰𝚁𝙺-𝙺𝙽𝙸𝙶𝙷𝚃-𝚇𝙼𝙳`;
 
         const sentMsg = await conn.sendMessage(from, {
             image: { url: data.thumbnail },
@@ -91,9 +91,9 @@ cmd({
                     await conn.sendMessage(senderID, { react: { text: '⬆️', key: receivedMsg.key } });
                     await conn.sendMessage(senderID, {
                         document: {
-                            url: result.url,
-                            mimetype: "audio/mpeg",
-                            fileName: `${data.title}.mp3`
+                            url: result.url,            // direct MP3 link
+                            mimetype: "audio/mpeg",     // MP3 MIME
+                            fileName: `${data.title}.mp3` // ensures WhatsApp recognizes as MP3
                         }
                     }, { quoted: receivedMsg });
                     await conn.sendMessage(senderID, { react: { text: '✔️', key: receivedMsg.key } });
